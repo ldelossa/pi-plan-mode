@@ -25,5 +25,6 @@ export interface PersistedState {
   executing: boolean;
   planDir: string | undefined;
   plan: PlanData | undefined;
+  latestPlanName: string | undefined;
   executionStartIdx: number | undefined;
 }

@@ -10,6 +10,7 @@ export class PlanModeState {
   executing = false;
   planDir: string | undefined;
   plan: PlanData | undefined;
+  latestPlanName: string | undefined;
   executionStartIdx: number | undefined;
   previousThinking: ThinkingLevel | undefined;
   previousModel: { provider: string; id: string } | undefined;
@@ -20,6 +21,7 @@ export class PlanModeState {
       executing: this.executing,
       planDir: this.planDir,
       plan: this.plan,
+      latestPlanName: this.latestPlanName,
       executionStartIdx: this.executionStartIdx,
     });
   }
@@ -31,6 +33,7 @@ export class PlanModeState {
       this.executing = saved.data.executing ?? this.executing;
       this.planDir = saved.data.planDir ?? this.planDir;
       this.plan = saved.data.plan ?? this.plan;
+      this.latestPlanName = saved.data.latestPlanName ?? saved.data.plan?.planName ?? this.latestPlanName;
       this.executionStartIdx = saved.data.executionStartIdx ?? this.executionStartIdx;
     }
   }

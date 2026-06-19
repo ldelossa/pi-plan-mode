@@ -79,6 +79,7 @@ export default function planMode(pi: ExtensionAPI): void {
     onPlanSubmitted: (dir, submittedPlan) => {
       state.planDir = dir;
       state.plan = submittedPlan;
+      state.latestPlanName = submittedPlan.planName;
       planReadyForReview = true;
       state.persist(pi);
     },
@@ -89,6 +90,7 @@ export default function planMode(pi: ExtensionAPI): void {
     onPlanRevised: (dir, revisedPlan) => {
       state.planDir = dir;
       state.plan = revisedPlan;
+      state.latestPlanName = revisedPlan.planName;
       planReadyForReview = true;
       state.persist(pi);
     },
@@ -265,7 +267,7 @@ export default function planMode(pi: ExtensionAPI): void {
   // ── Commands ──────────────────────────────────────────────────────────────
   pi.registerCommand('plan', {
     description:
-      'Enter plan mode, optionally with a starting prompt. "/plan resume" picks up an existing plan; "/plan focus <name>" pins the active plan for tracking calls.',
+      'Enter plan mode, optionally with a starting prompt. "/plan resume" picks up an existing plan; "/plan edit [name]" opens the latest/named plan in $EDITOR; "/plan focus <name>" pins the active plan for tracking calls.',
     handler: async (args, ctx) => {
       const trimmed = args?.trim();
       if (trimmed === 'resume') {
@@ -274,6 +276,11 @@ export default function planMode(pi: ExtensionAPI): void {
       }
       if (trimmed === 'models' || trimmed === 'settings') {
         await configureAndApplyPlanModeModels(ctx);
+        return;
+      }
+      if (trimmed === 'edit' || trimmed?.startsWith('edit ')) {
+        const name = trimmed === 'edit' ? undefined : trimmed.slice('edit'.length).trim();
+        await openPlanInEditorAndReconcile(ctx, name);
         return;
       }
       // "/plan focus <name>" — pin a plan so update_task / add_task / plan_status
@@ -286,6 +293,8 @@ export default function planMode(pi: ExtensionAPI): void {
         }
         const { plan, candidates } = await focusActivePlan(state, pi, runPlanIO, name);
         if (plan) {
+          state.latestPlanName = plan.planName;
+          state.persist(pi);
           ctx.ui.notify(`Focused plan: ${plan.title} (${plan.planName})`, 'info');
         } else {
           const hint = candidates.length ? ` In-progress: ${candidates.join(', ')}.` : '';
@@ -445,13 +454,57 @@ export default function planMode(pi: ExtensionAPI): void {
     return `'${value.replace(/'/g, `'"'"'`)}'`;
   }
 
-  async function openPlanInEditorAndReconcile(ctx: ExtensionContext): Promise<void> {
-    if (!state.plan || !state.planDir) {
-      ctx.ui.notify('No plan to edit.', 'error');
-      return;
+  async function resolvePlanForEdit(ctx: ExtensionContext, name?: string): Promise<boolean> {
+    const hint = name?.trim() || state.plan?.planName || state.latestPlanName;
+    let resolved = await resolveActivePlan(state, pi, runPlanIO, hint ? { name: hint } : {});
+
+    if (!resolved.plan && !hint && resolved.candidates.length > 1) {
+      const choice = await ctx.ui.select('Edit which plan?', [...resolved.candidates, 'Cancel']);
+      if (!choice || choice === 'Cancel') return false;
+      resolved = await resolveActivePlan(state, pi, runPlanIO, { name: choice });
     }
 
-    const handoffPath = join(ctx.cwd, state.planDir, 'HANDOFF.md');
+    if (!resolved.plan || !state.plan || !state.planDir) {
+      const hintText = resolved.candidates.length ? ` Candidates: ${resolved.candidates.join(', ')}.` : '';
+      ctx.ui.notify(`No plan to edit.${hintText}`, 'error');
+      return false;
+    }
+
+    state.latestPlanName = state.plan.planName;
+    state.persist(pi);
+    return true;
+  }
+
+  async function enterPlanModeForCurrentPlan(ctx: ExtensionContext): Promise<boolean> {
+    if (!state.plan || !state.planDir) return false;
+    const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
+    const previousThinking = pi.getThinkingLevel() as ThinkingLevel;
+    const previousModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
+
+    if (!(await switchModel(pi, ctx, config.plan.model))) {
+      ctx.ui.notify('Could not enter plan edit mode because the configured plan model is unavailable.', 'error');
+      return false;
+    }
+
+    if (!state.planEnabled && !state.executing) {
+      state.previousThinking = previousThinking;
+      state.previousModel = previousModel;
+    }
+    state.planEnabled = true;
+    state.executing = false;
+    state.executionStartIdx = undefined;
+    pi.setActiveTools(PLAN_TOOLS);
+    pi.setThinkingLevel(config.plan.thinking);
+    updateUI(state, ctx);
+    state.persist(pi);
+    return true;
+  }
+
+  async function openPlanInEditorAndReconcile(ctx: ExtensionContext, name?: string): Promise<void> {
+    if (!(await resolvePlanForEdit(ctx, name))) return;
+    if (!(await enterPlanModeForCurrentPlan(ctx))) return;
+
+    const handoffPath = join(ctx.cwd, state.planDir!, 'HANDOFF.md');
     const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
     const result = spawnSync(`${editor} ${shellQuote(handoffPath)}`, {
       stdio: 'inherit',
@@ -467,7 +520,7 @@ export default function planMode(pi: ExtensionAPI): void {
       return;
     }
 
-    state.plan.handoff = (await runPlanIO(loadHandoff(state.planDir))) ?? state.plan.handoff;
+    state.plan!.handoff = (await runPlanIO(loadHandoff(state.planDir!))) ?? state.plan!.handoff;
     state.persist(pi);
     planReadyForReview = false;
 
@@ -477,7 +530,7 @@ export default function planMode(pi: ExtensionAPI): void {
         `I edited the plan at ${state.planDir}/HANDOFF.md in my editor.`,
         '',
         'Treat the edited file as my inline review comments and revised planning draft.',
-        `Read ${state.planDir}/HANDOFF.md and ${state.planDir}/tasks.jsonl, reconcile my edits/comments, and call revise_plan for the same plan name "${state.plan.planName}" so HANDOFF.md and tasks.jsonl stay synchronized.`,
+        `Read ${state.planDir}/HANDOFF.md and ${state.planDir}/tasks.jsonl, reconcile my edits/comments, and call revise_plan for the same plan name "${state.plan!.planName}" so HANDOFF.md and tasks.jsonl stay synchronized.`,
         '',
         'Stay in plan mode. Do not execute the plan yet.',
       ].join('\n'),
@@ -760,6 +813,7 @@ export default function planMode(pi: ExtensionAPI): void {
           : undefined;
       }
       if (state.plan) {
+        state.latestPlanName = state.plan.planName;
         if (!(await switchModel(pi, ctx, pending.config.model))) {
           state.executing = false;
           state.planEnabled = false;

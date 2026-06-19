@@ -24,6 +24,7 @@ pi install npm:@dreki-gg/pi-questionnaire
 | Flag     | `--plan`       | Start pi in plan mode                          |
 | Command  | `/plan [prompt]` | Enter plan mode, optionally with a starting prompt |
 | Command  | `/plan resume` | Pick up an in-progress plan from disk          |
+| Command  | `/plan edit [name]` | Reopen the latest or named plan in `$EDITOR`, then reconcile edits through the planner |
 | Command  | `/plan models` / `/plan settings` | Configure plan/execute models and thinking levels |
 | Command  | `/plan-models` | Open the same model configuration UI directly |
 | Command  | `/plan focus <name>` | Pin a plan so tracking calls default to it (multi-plan repos) |
@@ -179,6 +180,15 @@ When the planner finishes, a menu appears:
 | **Provide follow-up instructions** | Open an editor for additional instructions to the planner              |
 | **Stay in plan mode** | Keep the plan as-is and continue planning manually                  |
 | **Exit plan mode** | Disable plan mode and restore original model                        |
+
+If you dismiss the menu or stop the turn, reopen the same editor/reconcile flow later with:
+
+```text
+/plan edit
+/plan edit <plan-name>
+```
+
+`/plan edit` remembers the latest plan you were working on in the current session; when needed it falls back to the active/single in-progress plan on disk.
 
 ### 3. Execute (configured execute model)
 

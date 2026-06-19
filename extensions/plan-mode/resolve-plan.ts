@@ -61,6 +61,7 @@ async function attach(
   };
   state.plan = plan;
   state.planDir = dir;
+  state.latestPlanName = plan.planName;
   state.persist(pi);
   return plan;
 }
