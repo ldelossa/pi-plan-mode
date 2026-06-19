@@ -30,7 +30,7 @@ type ModelLike = {
 
 export async function configurePlanModeModels(ctx: ExtensionContext): Promise<void> {
   while (true) {
-    const config = loadPlanModeConfig(ctx.cwd);
+    const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
     const choice = await ctx.ui.select('Plan mode models', [
       `Plan model — ${formatPhaseModelConfig(config.plan)}`,
       `Execute model — ${formatPhaseModelConfig(config.execute)}`,
@@ -74,7 +74,7 @@ export async function choosePhaseModelConfig(
 export async function chooseExecutionConfigForHandoff(
   ctx: ExtensionContext,
 ): Promise<PhaseModelConfig | undefined> {
-  const config = loadPlanModeConfig(ctx.cwd);
+  const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
   const defaultLabel = `Use configured default — ${formatPhaseModelConfig(config.execute)}`;
   const choice = await ctx.ui.select('Execute with:', [defaultLabel, 'Choose another model…', 'Cancel']);
   if (!choice || choice === 'Cancel') return undefined;

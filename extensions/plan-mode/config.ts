@@ -3,8 +3,8 @@
  *
  * Config precedence, lowest to highest:
  *   1. Built-in defaults
- *   2. ~/.pi/agent/pi-plan-mode.json
- *   3. <cwd>/.pi/pi-plan-mode.json
+ *   2. ~/.pi/agent/settings.json   → piPlanMode
+ *   3. <cwd>/.pi/settings.json     → piPlanMode, only when project trusted
  *   4. Environment variables
  */
 
@@ -39,8 +39,9 @@ export const DEFAULT_PLAN_MODE_CONFIG: PlanModeConfig = {
   },
 };
 
-export const GLOBAL_CONFIG_PATH = join(homedir(), '.pi', 'agent', 'pi-plan-mode.json');
-export const PROJECT_CONFIG_RELATIVE_PATH = join('.pi', 'pi-plan-mode.json');
+export const SETTINGS_KEY = 'piPlanMode';
+export const GLOBAL_SETTINGS_PATH = join(homedir(), '.pi', 'agent', 'settings.json');
+export const PROJECT_SETTINGS_RELATIVE_PATH = join('.pi', 'settings.json');
 
 const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
 
@@ -50,16 +51,17 @@ type PartialConfig = Partial<{
   exec: Partial<PhaseModelConfig> & { provider?: string; id?: string; model?: Partial<ModelPreset> };
 }>;
 
-export function loadPlanModeConfig(cwd?: string): PlanModeConfig {
+export function loadPlanModeConfig(cwd?: string, projectTrusted = false): PlanModeConfig {
   let config = cloneConfig(DEFAULT_PLAN_MODE_CONFIG);
-  config = mergeConfig(config, readConfigFile(GLOBAL_CONFIG_PATH));
-  if (cwd) config = mergeConfig(config, readConfigFile(join(cwd, PROJECT_CONFIG_RELATIVE_PATH)));
+  config = mergeConfig(config, readPlanModeSettings(GLOBAL_SETTINGS_PATH));
+  if (cwd && projectTrusted) {
+    config = mergeConfig(config, readPlanModeSettings(join(cwd, PROJECT_SETTINGS_RELATIVE_PATH)));
+  }
   return applyEnvOverrides(config);
 }
 
 export function saveGlobalPlanModeConfig(config: PlanModeConfig): void {
-  mkdirSync(dirname(GLOBAL_CONFIG_PATH), { recursive: true });
-  writeFileSync(GLOBAL_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  writePlanModeSettings(GLOBAL_SETTINGS_PATH, config);
 }
 
 export function formatPhaseModelConfig(config: PhaseModelConfig): string {
@@ -73,13 +75,28 @@ function cloneConfig(config: PlanModeConfig): PlanModeConfig {
   };
 }
 
-function readConfigFile(path: string): PartialConfig | undefined {
+function readPlanModeSettings(path: string): PartialConfig | undefined {
   if (!existsSync(path)) return undefined;
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as PartialConfig;
+    const settings = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    return settings[SETTINGS_KEY] as PartialConfig | undefined;
   } catch {
     return undefined;
   }
+}
+
+function writePlanModeSettings(path: string, config: PlanModeConfig): void {
+  let settings: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    try {
+      settings = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    } catch {
+      settings = {};
+    }
+  }
+  settings[SETTINGS_KEY] = config;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
 }
 
 function mergeConfig(base: PlanModeConfig, override: PartialConfig | undefined): PlanModeConfig {

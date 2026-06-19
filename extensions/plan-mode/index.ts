@@ -756,7 +756,7 @@ export default function planMode(pi: ExtensionAPI): void {
     }
 
     // Apply tool restrictions, model, and thinking level
-    const config = loadPlanModeConfig(ctx.cwd);
+    const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
     if (state.planEnabled) {
       pi.setActiveTools(PLAN_TOOLS);
       await switchModel(pi, ctx, config.plan.model);

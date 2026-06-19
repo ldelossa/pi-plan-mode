@@ -39,7 +39,7 @@ export async function enterPlanMode(
   state.previousThinking = pi.getThinkingLevel() as ThinkingLevel;
   state.previousModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
   pi.setActiveTools(PLAN_TOOLS);
-  const config = loadPlanModeConfig(ctx.cwd);
+  const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
   await switchModel(pi, ctx, config.plan.model);
   pi.setThinkingLevel(config.plan.thinking);
   ctx.ui.notify(
@@ -78,7 +78,7 @@ export async function startExecution(
   state.executing = true;
   state.executionStartIdx = ctx.sessionManager.getEntries().length;
   pi.setActiveTools(EXEC_TOOLS);
-  const config = loadPlanModeConfig(ctx.cwd);
+  const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
   await switchModel(pi, ctx, config.execute.model);
   pi.setThinkingLevel(config.execute.thinking);
   ctx.ui.notify(

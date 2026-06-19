@@ -108,29 +108,31 @@ Open the model picker with either command:
 /plan-models
 ```
 
-The picker shows available Pi models in a filterable TUI list, then asks for the thinking level for that phase. Settings are saved globally to:
+The picker shows available Pi models in a filterable TUI list, then asks for the thinking level for that phase. Selections are persisted in Pi's global settings file under the `piPlanMode` key:
 
 ```text
-~/.pi/agent/pi-plan-mode.json
+~/.pi/agent/settings.json
 ```
 
-Project-specific overrides are also supported at:
+Project-specific overrides are also supported, after project trust, under the same key:
 
 ```text
-.pi/pi-plan-mode.json
+.pi/settings.json
 ```
 
 Config shape:
 
 ```json
 {
-  "plan": {
-    "model": { "provider": "anthropic", "id": "claude-opus-4-6" },
-    "thinking": "medium"
-  },
-  "execute": {
-    "model": { "provider": "openai", "id": "gpt-5.5" },
-    "thinking": "low"
+  "piPlanMode": {
+    "plan": {
+      "model": { "provider": "anthropic", "id": "claude-opus-4-6" },
+      "thinking": "medium"
+    },
+    "execute": {
+      "model": { "provider": "openai", "id": "gpt-5.5" },
+      "thinking": "low"
+    }
   }
 }
 ```
