@@ -464,14 +464,6 @@ export default function planMode(pi: ExtensionAPI): void {
     }
   });
 
-  function sendUserPrompt(ctx: ExtensionContext, prompt: string): void {
-    if (ctx.isIdle()) {
-      pi.sendUserMessage(prompt);
-    } else {
-      pi.sendUserMessage(prompt, { deliverAs: 'followUp' });
-    }
-  }
-
   function shellQuote(value: string): string {
     return `'${value.replace(/'/g, `'"'"'`)}'`;
   }
@@ -633,7 +625,9 @@ export default function planMode(pi: ExtensionAPI): void {
 
     if (choice === 'Provide follow-up instructions') {
       const instructions = await ctx.ui.editor('Follow-up instructions for the planner:', '');
-      if (instructions?.trim()) sendUserPrompt(ctx, instructions.trim());
+      if (instructions?.trim()) {
+        pi.sendUserMessage(instructions.trim(), { deliverAs: 'followUp' });
+      }
       return;
     }
 
