@@ -32,10 +32,10 @@ import { updateUI } from './ui.js';
 import { buildPlanModePrompt, buildExecutionPrompt } from './prompts.js';
 import { filterExecutionMessages, filterStalePlanMessages } from './context-filter.js';
 import { activeTasksResolved, deferredTasks, isPlanFinalizable } from '@dreki-gg/taskman';
-import { enterPlanMode, exitPlanMode, switchModel } from './phase-transitions.js';
+import { enterPlanMode, exitPlanMode, startExecution, switchModel } from './phase-transitions.js';
 import { resumePlan, executeInNewSession } from './resume.js';
 import { loadPlanModeConfig } from './config.js';
-import { configurePlanModeModels } from './model-selector.js';
+import { configurePlanModeModels, chooseExecutionConfigForHandoff } from './model-selector.js';
 import { resolveActivePlan, focusActivePlan } from './resolve-plan.js';
 import { reconcileInitiativeForPlan } from '@dreki-gg/taskman';
 import { collectPlanDrift } from '@dreki-gg/taskman';
@@ -585,6 +585,24 @@ export default function planMode(pi: ExtensionAPI): void {
     );
   }
 
+  async function startExecutionInPlaceFromMenu(ctx: ExtensionContext): Promise<void> {
+    if (!state.plan || !state.planDir) return;
+
+    const config = await chooseExecutionConfigForHandoff(ctx);
+    if (!config) return;
+
+    const started = await startExecution(state, pi, ctx);
+    if (!started) return;
+
+    const first = state.plan.tasks.find((t) => t.status === 'pending');
+    if (first) {
+      pi.sendUserMessage(
+        `Execute plan "${state.plan.title}". Start with ${first.id}: ${first.description}`,
+        { deliverAs: 'followUp' },
+      );
+    }
+  }
+
   async function showPlanReadyMenu(ctx: ExtensionContext): Promise<void> {
     if (!state.plan || !state.planDir || !planReadyForReview) return;
 
@@ -609,7 +627,7 @@ export default function planMode(pi: ExtensionAPI): void {
     planReadyForReview = false;
 
     if (choice === 'Execute plan') {
-      sendUserPrompt(ctx, '/plan-exec');
+      await startExecutionInPlaceFromMenu(ctx);
       return;
     }
 
