@@ -386,29 +386,51 @@ export default function planMode(pi: ExtensionAPI): void {
   });
 
   // ── Event: block destructive bash + restrict writes in plan mode ──────────
-  pi.on('tool_call', async (event) => {
+  pi.on('tool_call', async (event, ctx) => {
     if (!state.planEnabled) return;
 
     // Block destructive bash commands
     if (event.toolName === 'bash') {
       const command = event.input.command as string;
       if (!isSafeCommand(command)) {
+        if (ctx.hasUI) {
+          const ok = await ctx.ui.confirm(
+            'Exit plan mode?',
+            'A blocked bash command was attempted. Exit plan mode and retry?',
+          );
+          if (ok) {
+            await exitPlanMode(state, pi, ctx);
+            return;
+          }
+        }
         return {
           block: true,
           reason: `Plan mode: command blocked. Use /plan to exit plan mode first.\nCommand: ${command}`,
         };
       }
+      return;
     }
 
     // Restrict write to .plans/ directory only
     if (event.toolName === 'write' || event.toolName === 'edit') {
       const path = event.input.path as string;
-      if (!isPlanPath(path)) {
-        return {
-          block: true,
-          reason: `Plan mode: writes are restricted to .plans/ directory only.\nPath: ${path}`,
-        };
+      if (isPlanPath(path)) return;
+
+      if (ctx.hasUI) {
+        const ok = await ctx.ui.confirm(
+          'Exit plan mode?',
+          'Writing outside .plans/ requires exiting plan mode. Exit and continue?',
+        );
+        if (ok) {
+          await exitPlanMode(state, pi, ctx);
+          return;
+        }
       }
+
+      return {
+        block: true,
+        reason: `Plan mode: writes are restricted to .plans/ directory only.\nPath: ${path}`,
+      };
     }
   });
 
