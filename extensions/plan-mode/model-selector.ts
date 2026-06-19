@@ -117,8 +117,10 @@ async function chooseModel(
     return undefined;
   }
 
+  const modelToValue = new Map<string, ModelPreset>();
   const items: SelectItem[] = models.map((model) => {
     const value = modelKey(model);
+    modelToValue.set(value, { provider: model.provider, id: model.id });
     const active = model.provider === current.provider && model.id === current.id;
     const providerName = ctx.modelRegistry.getProviderDisplayName(model.provider) ?? model.provider;
     const details = [
@@ -136,10 +138,9 @@ async function chooseModel(
     };
   });
 
-  const selected = await selectWithModal(ctx, title, items);
+  const selected = await selectWithFilter(ctx, title, items);
   if (!selected) return undefined;
-  const [provider, ...idParts] = selected.split('/');
-  return { provider, id: idParts.join('/') };
+  return modelToValue.get(selected);
 }
 
 async function chooseThinkingLevel(
@@ -154,8 +155,13 @@ async function chooseThinkingLevel(
     label: level === current ? `${level} (current)` : level,
     description: thinkingDescription(level),
   }));
-  const selected = await selectWithModal(ctx, title, items);
+  const selected = await selectWithFilter(ctx, title, items);
   return selected as ThinkingLevel | undefined;
+}
+
+function matchesFilter(item: SelectItem, filter: string): boolean {
+  const lower = filter.toLowerCase();
+  return item.value.toLowerCase().includes(lower) || item.label.toLowerCase().includes(lower);
 }
 
 function availableModels(ctx: ExtensionContext): ModelLike[] {
@@ -206,7 +212,7 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat('en', { notation: 'compact' }).format(value);
 }
 
-async function selectWithModal(
+async function selectWithFilter(
   ctx: ExtensionContext,
   title: string,
   items: SelectItem[],
@@ -218,22 +224,35 @@ async function selectWithModal(
   }
 
   const result = await ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
-    const container = new Container();
-    container.addChild(new DynamicBorder((text: string) => theme.fg('accent', text)));
-    container.addChild(new Text(theme.fg('accent', theme.bold(title)), 1, 0));
+    let filterText = '';
+    let currentList: SelectList | null = null;
 
-    const selectList = new SelectList(items, Math.min(items.length, 14), {
-      selectedPrefix: (text) => theme.fg('accent', text),
-      selectedText: (text) => theme.fg('accent', text),
-      description: (text) => theme.fg('muted', text),
-      scrollInfo: (text) => theme.fg('dim', text),
-      noMatch: (text) => theme.fg('warning', text),
-    });
-    selectList.onSelect = (item) => done(item.value as string);
-    selectList.onCancel = () => done(null);
-    container.addChild(selectList);
-    container.addChild(new Text(theme.fg('dim', 'type to filter • ↑↓ navigate • enter select • esc cancel'), 1, 0));
-    container.addChild(new DynamicBorder((text: string) => theme.fg('accent', text)));
+    function buildContainer(): Container {
+      const filtered = filterText ? items.filter((item) => matchesFilter(item, filterText)) : items;
+      const displayItems = filtered.length > 0 ? filtered : items;
+      const maxVisible = Math.min(displayItems.length, 14);
+
+      currentList = new SelectList(displayItems, maxVisible, {
+        selectedPrefix: (text) => theme.fg('accent', text),
+        selectedText: (text) => theme.fg('accent', text),
+        description: (text) => theme.fg('muted', text),
+        scrollInfo: (text) => theme.fg('dim', text),
+        noMatch: (text) => theme.fg('warning', text),
+      });
+      currentList.onSelect = (item) => done(item.value as string);
+      currentList.onCancel = () => done(null);
+
+      const container = new Container();
+      container.addChild(new DynamicBorder((text: string) => theme.fg('accent', text)));
+      container.addChild(new Text(theme.fg('accent', theme.bold(title)), 1, 0));
+      container.addChild(new Text(theme.fg('dim', filterText ? `  filter: ${filterText}` : '  '), 1, 0));
+      container.addChild(currentList);
+      container.addChild(new Text(theme.fg('dim', 'type to filter • ↑↓ navigate • enter select • esc cancel'), 1, 0));
+      container.addChild(new DynamicBorder((text: string) => theme.fg('accent', text)));
+      return container;
+    }
+
+    let container = buildContainer();
 
     return {
       render(width: number) {
@@ -243,7 +262,27 @@ async function selectWithModal(
         container.invalidate();
       },
       handleInput(data: string) {
-        selectList.handleInput(data);
+        const isNav = data.includes('\x1b') || data === '\r' || data === '\n' || data === '\x7f' || data === '\b';
+        if (isNav) {
+          if (data === '\x7f' || data === '\b') {
+            if (filterText.length > 0) {
+              filterText = filterText.slice(0, -1);
+              container = buildContainer();
+            }
+          } else if (currentList) {
+            currentList.handleInput(data);
+          }
+          tui.requestRender();
+          return;
+        }
+
+        if (data.length === 1 && data >= ' ') {
+          filterText += data;
+        } else if (data.length > 1) {
+          const printable = [...data].filter((c) => c >= ' ').join('');
+          if (printable) filterText += printable;
+        }
+        container = buildContainer();
         tui.requestRender();
       },
     };

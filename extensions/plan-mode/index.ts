@@ -504,6 +504,7 @@ export default function planMode(pi: ExtensionAPI): void {
     if (!(await resolvePlanForEdit(ctx, name))) return;
     if (!(await enterPlanModeForCurrentPlan(ctx))) return;
 
+    const handoffBefore = state.plan!.handoff;
     const handoffPath = join(ctx.cwd, state.planDir!, 'HANDOFF.md');
     const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
     const result = spawnSync(`${editor} ${shellQuote(handoffPath)}`, {
@@ -513,27 +514,50 @@ export default function planMode(pi: ExtensionAPI): void {
 
     if (result.error) {
       ctx.ui.notify(`Failed to open editor: ${result.error.message}`, 'error');
+      planReadyForReview = true;
       return;
     }
     if (typeof result.status === 'number' && result.status !== 0) {
       ctx.ui.notify(`Editor exited with status ${result.status}; leaving plan unchanged.`, 'warning');
+      planReadyForReview = true;
       return;
     }
 
     state.plan!.handoff = (await runPlanIO(loadHandoff(state.planDir!))) ?? state.plan!.handoff;
     state.persist(pi);
+
+    const changed = state.plan!.handoff !== handoffBefore;
+
+    if (!changed) {
+      // Plan was not edited — return to the plan-ready menu so the user can
+      // take another action without an unnecessary agent turn.
+      planReadyForReview = true;
+      ctx.ui.notify('Plan is unchanged.', 'info');
+      return;
+    }
+
     planReadyForReview = false;
 
-    sendUserPrompt(
-      ctx,
-      [
-        `I edited the plan at ${state.planDir}/HANDOFF.md in my editor.`,
-        '',
-        'Treat the edited file as my inline review comments and revised planning draft.',
-        `Read ${state.planDir}/HANDOFF.md and ${state.planDir}/tasks.jsonl, reconcile my edits/comments, and call revise_plan for the same plan name "${state.plan!.planName}" so HANDOFF.md and tasks.jsonl stay synchronized.`,
-        '',
-        'Stay in plan mode. Do not execute the plan yet.',
-      ].join('\n'),
+    // Inject context-only instructions; the user should not see these.
+    pi.sendMessage(
+      {
+        customType: 'plan-edit-context',
+        content: [
+          `I edited my plan file at ${state.planDir}/HANDOFF.md in my editor.`,
+          '',
+          'Read the edited HANDOFF.md and tasks.jsonl. Evaluate whether the plan text contains inline review comments, questions, or directives to change the plan.',
+          '',
+          'If my edits include review comments that require plan changes, reconcile them by calling revise_plan for the same plan name. If I wrote inline questions, answer them. If I gave directives (e.g. "change step 3 to use X instead of Y"), apply them.',
+          '',
+          'If the plan content is effectively unchanged or my edits are just minor wording, note that the plan is unchanged and suggest next steps.',
+          '',
+          `Plan name: "${state.plan!.planName}"`,
+          '',
+          'Stay in plan mode. Do not execute the plan.',
+        ].join('\n'),
+        display: false,
+      },
+      { deliverAs: 'followUp' },
     );
   }
 
