@@ -14,6 +14,7 @@ export const PLAN_TOOLS = [
   'revise_plan',
   'preview_prototype',
   'write',
+  'ask_user',
   'questionnaire',
   'search_skills',
   'subagent',

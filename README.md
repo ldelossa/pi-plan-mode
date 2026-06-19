@@ -10,9 +10,10 @@ This is a standalone fork of `@dreki-gg/pi-plan-mode` with configurable plan and
 pi install git:github.com/ldelossa/pi-plan-mode
 ```
 
-Recommended companions:
+Optional companions:
 
 ```bash
+# Multi-question structured forms; ask_user is preferred when available for focused decisions.
 pi install npm:@dreki-gg/pi-questionnaire
 ```
 
@@ -162,7 +163,7 @@ The planner has access to read-only tools plus `edit`/`write` restricted to `.pl
 
 The planner:
 - Inspects the codebase using read-only tools
-- Uses `questionnaire` when requirements are underspecified
+- Uses `ask_user` for focused clarification questions when explicit choices are needed; `questionnaire` remains an optional multi-question fallback
 - Creates `.plans/<kebab-name>/PLAN.md` with the full numbered plan
 - Creates `.plans/<kebab-name>/START-PROMPT.md` — a self-contained handoff prompt with all context needed to execute without the planning conversation
 - Can add supporting files in the same directory for extra context
