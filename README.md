@@ -171,9 +171,10 @@ When the planner finishes, a menu appears:
 
 | Option           | Description                                                            |
 | ---------------- | ---------------------------------------------------------------------- |
+| **Open HANDOFF.md in `$EDITOR` and reconcile** | Edit/comment on the plan inline; after the editor closes, the planner rereads the file and calls `revise_plan` to sync `HANDOFF.md` and `tasks.jsonl` |
 | **Execute Plan** | Extract todos from PLAN.md, choose the configured execution model or pick another, then start with START-PROMPT.md |
-| **Refine Plan**  | Adversarial review — planner critiques its own plan and updates files  |
-| **Follow up**    | Open an editor for additional instructions to the planner              |
+| **Provide follow-up instructions** | Open an editor for additional instructions to the planner              |
+| **Stay in plan mode** | Keep the plan as-is and continue planning manually                  |
 | **Exit plan mode** | Disable plan mode and restore original model                        |
 
 ### 3. Execute (configured execute model)

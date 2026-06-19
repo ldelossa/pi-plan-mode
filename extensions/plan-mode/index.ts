@@ -16,8 +16,10 @@
  *   --plan          — start session in plan mode
  */
 
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { Key } from '@earendil-works/pi-tui';
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 import { PLAN_TOOLS, EXEC_TOOLS } from './constants.js';
 import type { ThinkingLevel, TaskStatus } from './types.js';
 import { PlanModeState } from './state.js';
@@ -63,6 +65,7 @@ export default function planMode(pi: ExtensionAPI): void {
   const runPlanIO = makePlanRuntime();
   // Cached plan list for `@plan:<slug>` autocomplete; refreshed at session start.
   const planReferenceIndex = createPlanReferenceIndex(runPlanIO);
+  let planReadyForReview = false;
 
   // ── Flag ──────────────────────────────────────────────────────────────────
   pi.registerFlag('plan', {
@@ -76,6 +79,7 @@ export default function planMode(pi: ExtensionAPI): void {
     onPlanSubmitted: (dir, submittedPlan) => {
       state.planDir = dir;
       state.plan = submittedPlan;
+      planReadyForReview = true;
       state.persist(pi);
     },
   });
@@ -85,6 +89,7 @@ export default function planMode(pi: ExtensionAPI): void {
     onPlanRevised: (dir, revisedPlan) => {
       state.planDir = dir;
       state.plan = revisedPlan;
+      planReadyForReview = true;
       state.persist(pi);
     },
   });
@@ -405,6 +410,96 @@ export default function planMode(pi: ExtensionAPI): void {
     }
   });
 
+  function sendUserPrompt(ctx: ExtensionContext, prompt: string): void {
+    if (ctx.isIdle()) {
+      pi.sendUserMessage(prompt);
+    } else {
+      pi.sendUserMessage(prompt, { deliverAs: 'followUp' });
+    }
+  }
+
+  function shellQuote(value: string): string {
+    return `'${value.replace(/'/g, `'"'"'`)}'`;
+  }
+
+  async function openPlanInEditorAndReconcile(ctx: ExtensionContext): Promise<void> {
+    if (!state.plan || !state.planDir) {
+      ctx.ui.notify('No plan to edit.', 'error');
+      return;
+    }
+
+    const handoffPath = join(ctx.cwd, state.planDir, 'HANDOFF.md');
+    const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
+    const result = spawnSync(`${editor} ${shellQuote(handoffPath)}`, {
+      stdio: 'inherit',
+      shell: true,
+    });
+
+    if (result.error) {
+      ctx.ui.notify(`Failed to open editor: ${result.error.message}`, 'error');
+      return;
+    }
+    if (typeof result.status === 'number' && result.status !== 0) {
+      ctx.ui.notify(`Editor exited with status ${result.status}; leaving plan unchanged.`, 'warning');
+      return;
+    }
+
+    state.plan.handoff = (await runPlanIO(loadHandoff(state.planDir))) ?? state.plan.handoff;
+    state.persist(pi);
+    planReadyForReview = false;
+
+    sendUserPrompt(
+      ctx,
+      [
+        `I edited the plan at ${state.planDir}/HANDOFF.md in my editor.`,
+        '',
+        'Treat the edited file as my inline review comments and revised planning draft.',
+        `Read ${state.planDir}/HANDOFF.md and ${state.planDir}/tasks.jsonl, reconcile my edits/comments, and call revise_plan for the same plan name "${state.plan.planName}" so HANDOFF.md and tasks.jsonl stay synchronized.`,
+        '',
+        'Stay in plan mode. Do not execute the plan yet.',
+      ].join('\n'),
+    );
+  }
+
+  async function showPlanReadyMenu(ctx: ExtensionContext): Promise<void> {
+    if (!state.plan || !state.planDir || !planReadyForReview) return;
+
+    const choice = await ctx.ui.select(`Plan ready — ${state.plan.title}`, [
+      'Open HANDOFF.md in $EDITOR and reconcile',
+      'Execute plan',
+      'Provide follow-up instructions',
+      'Stay in plan mode',
+      'Exit plan mode',
+    ]);
+
+    if (!choice || choice === 'Stay in plan mode') {
+      planReadyForReview = false;
+      return;
+    }
+
+    if (choice === 'Open HANDOFF.md in $EDITOR and reconcile') {
+      await openPlanInEditorAndReconcile(ctx);
+      return;
+    }
+
+    planReadyForReview = false;
+
+    if (choice === 'Execute plan') {
+      sendUserPrompt(ctx, '/plan-exec');
+      return;
+    }
+
+    if (choice === 'Provide follow-up instructions') {
+      const instructions = await ctx.ui.editor('Follow-up instructions for the planner:', '');
+      if (instructions?.trim()) sendUserPrompt(ctx, instructions.trim());
+      return;
+    }
+
+    if (choice === 'Exit plan mode') {
+      await exitPlanMode(state, pi, ctx);
+    }
+  }
+
   // ── Event: agent_end — blocked tasks, completion, post-plan menu ──────────
   pi.on('agent_end', async (_event, ctx) => {
     // ── During execution: handle blocked tasks and completion ──
@@ -605,8 +700,11 @@ export default function planMode(pi: ExtensionAPI): void {
       return;
     }
 
-    // Plan submitted — user can /plan-exec or type naturally.
-    // No menu needed: plan.jsonl + HANDOFF.md are the source of truth.
+    // During planning: once submit_plan/revise_plan succeeds, let the user
+    // review, edit in $EDITOR, ask for more planning, or kick off execution.
+    if (state.planEnabled && state.plan && state.planDir && planReadyForReview) {
+      await showPlanReadyMenu(ctx);
+    }
   });
 
   // ── Event: session restore ────────────────────────────────────────────────
