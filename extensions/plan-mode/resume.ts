@@ -111,10 +111,11 @@ export async function resumePlan(
   if (action === 'Re-plan from scratch') {
     const planTitle = state.plan.title;
     const planDirPath = state.planDir;
-    await enterPlanMode(state, pi, ctx);
-    pi.sendUserMessage(
-      `There is an existing plan "${planTitle}" at ${planDirPath}/tasks.jsonl. Review it and create a revised plan using submit_plan. Keep the same plan name ("${planName}").`,
-    );
+    if (await enterPlanMode(state, pi, ctx)) {
+      pi.sendUserMessage(
+        `There is an existing plan "${planTitle}" at ${planDirPath}/tasks.jsonl. Review it and create a revised plan using submit_plan. Keep the same plan name ("${planName}").`,
+      );
+    }
     return;
   }
 

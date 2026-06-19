@@ -8,11 +8,12 @@ import { Container, type SelectItem, SelectList, Text } from '@earendil-works/pi
 import type { ThinkingLevel } from './types.js';
 import {
   formatPhaseModelConfig,
+  getEnvOverrideKeys,
   loadPlanModeConfig,
-  saveGlobalPlanModeConfig,
+  saveGlobalPhaseModelConfig,
+  type ConfigPhase,
   type ModelPreset,
   type PhaseModelConfig,
-  type PlanModeConfig,
 } from './config.js';
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
@@ -28,30 +29,39 @@ type ModelLike = {
   thinkingLevelMap?: Partial<Record<(typeof THINKING_LEVELS)[number], string | null>>;
 };
 
-export async function configurePlanModeModels(ctx: ExtensionContext): Promise<void> {
+export interface ConfigureModelsResult {
+  planChanged: boolean;
+  executeChanged: boolean;
+}
+
+export async function configurePlanModeModels(ctx: ExtensionContext): Promise<ConfigureModelsResult> {
+  const result: ConfigureModelsResult = { planChanged: false, executeChanged: false };
+
   while (true) {
     const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
-    const choice = await ctx.ui.select('Plan mode models', [
+    const envKeys = getEnvOverrideKeys();
+    const title = envKeys.length > 0 ? `Plan mode models (env override: ${envKeys.join(', ')})` : 'Plan mode models';
+    const choice = await ctx.ui.select(title, [
       `Plan model — ${formatPhaseModelConfig(config.plan)}`,
       `Execute model — ${formatPhaseModelConfig(config.execute)}`,
       'Done',
     ]);
 
-    if (!choice || choice === 'Done') return;
+    if (!choice || choice === 'Done') return result;
 
     if (choice.startsWith('Plan model')) {
       const selected = await choosePhaseModelConfig(ctx, 'Select plan model', config.plan);
       if (!selected) continue;
-      saveMergedConfig({ ...config, plan: selected });
-      ctx.ui.notify(`Plan model set to ${formatPhaseModelConfig(selected)}`, 'info');
+      persistSelectedPhase(ctx, 'plan', selected);
+      result.planChanged = true;
       continue;
     }
 
     if (choice.startsWith('Execute model')) {
       const selected = await choosePhaseModelConfig(ctx, 'Select execute model', config.execute);
       if (!selected) continue;
-      saveMergedConfig({ ...config, execute: selected });
-      ctx.ui.notify(`Execute model set to ${formatPhaseModelConfig(selected)}`, 'info');
+      persistSelectedPhase(ctx, 'execute', selected);
+      result.executeChanged = true;
     }
   }
 }
@@ -78,15 +88,22 @@ export async function chooseExecutionConfigForHandoff(
   const defaultLabel = `Use configured default — ${formatPhaseModelConfig(config.execute)}`;
   const choice = await ctx.ui.select('Execute with:', [defaultLabel, 'Choose another model…', 'Cancel']);
   if (!choice || choice === 'Cancel') return undefined;
-  if (choice === defaultLabel) return config.execute;
+  if (choice === defaultLabel) {
+    if (isModelUsable(ctx, config.execute.model)) return config.execute;
+    ctx.ui.notify(
+      `Configured execute model ${config.execute.model.provider}/${config.execute.model.id} is unavailable. Choose another model.`,
+      'warning',
+    );
+  }
   return choosePhaseModelConfig(ctx, 'Select execute model', config.execute);
 }
 
-function saveMergedConfig(config: PlanModeConfig): void {
-  // Persist the effective config globally. Project-local config and environment
-  // variables can still override it at runtime if the user wants per-project or
-  // shell-specific behavior.
-  saveGlobalPlanModeConfig(config);
+function persistSelectedPhase(ctx: ExtensionContext, phase: ConfigPhase, selected: PhaseModelConfig): void {
+  saveGlobalPhaseModelConfig(phase, selected);
+  const envKeys = getEnvOverrideKeys(phase);
+  const phaseLabel = phase === 'plan' ? 'Plan' : 'Execute';
+  const suffix = envKeys.length > 0 ? ` Saved, but current value is still overridden by: ${envKeys.join(', ')}` : '';
+  ctx.ui.notify(`${phaseLabel} model set to ${formatPhaseModelConfig(selected)}.${suffix}`, 'info');
 }
 
 async function chooseModel(
@@ -150,6 +167,11 @@ function availableModels(ctx: ExtensionContext): ModelLike[] {
 
 function findModelInfo(ctx: ExtensionContext, preset: ModelPreset): ModelLike | undefined {
   return ctx.modelRegistry.find(preset.provider, preset.id) as ModelLike | undefined;
+}
+
+function isModelUsable(ctx: ExtensionContext, preset: ModelPreset): boolean {
+  const model = ctx.modelRegistry.find(preset.provider, preset.id);
+  return Boolean(model && ctx.modelRegistry.hasConfiguredAuth(model));
 }
 
 function supportedThinkingLevels(model: ModelLike | undefined): ThinkingLevel[] {

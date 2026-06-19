@@ -28,6 +28,8 @@ export interface PlanModeConfig {
   execute: PhaseModelConfig;
 }
 
+export type ConfigPhase = 'plan' | 'execute';
+
 export const DEFAULT_PLAN_MODE_CONFIG: PlanModeConfig = {
   plan: {
     model: { provider: 'anthropic', id: 'claude-opus-4-6' },
@@ -45,6 +47,9 @@ export const PROJECT_SETTINGS_RELATIVE_PATH = join('.pi', 'settings.json');
 
 const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
 
+const PLAN_ENV_KEYS = ['PI_PLAN_MODE_PLAN_PROVIDER', 'PI_PLAN_PROVIDER', 'PI_PLAN_MODE_PLAN_MODEL', 'PI_PLAN_MODEL', 'PI_PLAN_MODE_PLAN_THINKING', 'PI_PLAN_THINKING'];
+const EXECUTE_ENV_KEYS = ['PI_PLAN_MODE_EXEC_PROVIDER', 'PI_EXEC_PROVIDER', 'PI_PLAN_MODE_EXEC_MODEL', 'PI_EXEC_MODEL', 'PI_PLAN_MODE_EXEC_THINKING', 'PI_EXEC_THINKING'];
+
 type PartialConfig = Partial<{
   plan: Partial<PhaseModelConfig> & { provider?: string; id?: string; model?: Partial<ModelPreset> };
   execute: Partial<PhaseModelConfig> & { provider?: string; id?: string; model?: Partial<ModelPreset> };
@@ -52,27 +57,47 @@ type PartialConfig = Partial<{
 }>;
 
 export function loadPlanModeConfig(cwd?: string, projectTrusted = false): PlanModeConfig {
+  return applyEnvOverrides(loadPlanModeSettingsConfig(cwd, projectTrusted));
+}
+
+export function loadPlanModeSettingsConfig(cwd?: string, projectTrusted = false): PlanModeConfig {
   let config = cloneConfig(DEFAULT_PLAN_MODE_CONFIG);
   config = mergeConfig(config, readPlanModeSettings(GLOBAL_SETTINGS_PATH));
   if (cwd && projectTrusted) {
     config = mergeConfig(config, readPlanModeSettings(join(cwd, PROJECT_SETTINGS_RELATIVE_PATH)));
   }
-  return applyEnvOverrides(config);
+  return config;
 }
 
-export function saveGlobalPlanModeConfig(config: PlanModeConfig): void {
-  writePlanModeSettings(GLOBAL_SETTINGS_PATH, config);
+export function saveGlobalPhaseModelConfig(phase: ConfigPhase, config: PhaseModelConfig): PlanModeConfig {
+  const next = loadGlobalPlanModeSettingsConfig();
+  next[phase] = clonePhase(config);
+  writePlanModeSettings(GLOBAL_SETTINGS_PATH, next);
+  return next;
+}
+
+export function getEnvOverrideKeys(phase?: ConfigPhase): string[] {
+  const keys = phase === 'plan' ? PLAN_ENV_KEYS : phase === 'execute' ? EXECUTE_ENV_KEYS : [...PLAN_ENV_KEYS, ...EXECUTE_ENV_KEYS];
+  return keys.filter((key) => stringOrUndefined(process.env[key]));
 }
 
 export function formatPhaseModelConfig(config: PhaseModelConfig): string {
   return `${config.model.provider}/${config.model.id}:${config.thinking}`;
 }
 
+function loadGlobalPlanModeSettingsConfig(): PlanModeConfig {
+  return mergeConfig(cloneConfig(DEFAULT_PLAN_MODE_CONFIG), readPlanModeSettings(GLOBAL_SETTINGS_PATH));
+}
+
 function cloneConfig(config: PlanModeConfig): PlanModeConfig {
   return {
-    plan: { model: { ...config.plan.model }, thinking: config.plan.thinking },
-    execute: { model: { ...config.execute.model }, thinking: config.execute.thinking },
+    plan: clonePhase(config.plan),
+    execute: clonePhase(config.execute),
   };
+}
+
+function clonePhase(config: PhaseModelConfig): PhaseModelConfig {
+  return { model: { ...config.model }, thinking: config.thinking };
 }
 
 function readPlanModeSettings(path: string): PartialConfig | undefined {

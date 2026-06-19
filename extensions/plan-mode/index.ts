@@ -240,6 +240,28 @@ export default function planMode(pi: ExtensionAPI): void {
     },
   });
 
+  async function configureAndApplyPlanModeModels(ctx: ExtensionContext): Promise<void> {
+    const result = await configurePlanModeModels(ctx);
+    const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
+
+    if (state.planEnabled && result.planChanged) {
+      if (await switchModel(pi, ctx, config.plan.model)) {
+        pi.setThinkingLevel(config.plan.thinking);
+        ctx.ui.notify(`Active plan model applied — ${config.plan.model.provider}/${config.plan.model.id}:${config.plan.thinking}`, 'info');
+      }
+    }
+
+    if (state.executing && result.executeChanged) {
+      if (await switchModel(pi, ctx, config.execute.model)) {
+        pi.setThinkingLevel(config.execute.thinking);
+        ctx.ui.notify(
+          `Active execute model applied — ${config.execute.model.provider}/${config.execute.model.id}:${config.execute.thinking}`,
+          'info',
+        );
+      }
+    }
+  }
+
   // ── Commands ──────────────────────────────────────────────────────────────
   pi.registerCommand('plan', {
     description:
@@ -251,7 +273,7 @@ export default function planMode(pi: ExtensionAPI): void {
         return;
       }
       if (trimmed === 'models' || trimmed === 'settings') {
-        await configurePlanModeModels(ctx);
+        await configureAndApplyPlanModeModels(ctx);
         return;
       }
       // "/plan focus <name>" — pin a plan so update_task / add_task / plan_status
@@ -275,15 +297,16 @@ export default function planMode(pi: ExtensionAPI): void {
         await exitPlanMode(state, pi, ctx);
         return;
       }
-      await enterPlanMode(state, pi, ctx);
-      if (trimmed) pi.sendUserMessage(trimmed);
+      if (await enterPlanMode(state, pi, ctx)) {
+        if (trimmed) pi.sendUserMessage(trimmed);
+      }
     },
   });
 
   pi.registerCommand('plan-models', {
     description: 'Configure plan/execute models and thinking levels',
     handler: async (_args, ctx) => {
-      await configurePlanModeModels(ctx);
+      await configureAndApplyPlanModeModels(ctx);
     },
   });
 
@@ -573,11 +596,12 @@ export default function planMode(pi: ExtensionAPI): void {
           }
           return;
         } else if (choice === 'Re-plan') {
-          await enterPlanMode(state, pi, ctx);
-          pi.sendUserMessage(
-            `Task ${bs.id} was blocked: ${bs.notes ?? 'no details'}. Re-analyze and create a revised plan.`,
-            { deliverAs: 'followUp' },
-          );
+          if (await enterPlanMode(state, pi, ctx)) {
+            pi.sendUserMessage(
+              `Task ${bs.id} was blocked: ${bs.notes ?? 'no details'}. Re-analyze and create a revised plan.`,
+              { deliverAs: 'followUp' },
+            );
+          }
           return;
         } else if (choice === 'Abort execution') {
           await exitPlanMode(state, pi, ctx);
@@ -736,10 +760,17 @@ export default function planMode(pi: ExtensionAPI): void {
           : undefined;
       }
       if (state.plan) {
+        if (!(await switchModel(pi, ctx, pending.config.model))) {
+          state.executing = false;
+          state.planEnabled = false;
+          ctx.ui.notify('Execution handoff paused because the selected model is unavailable.', 'error');
+          updateUI(state, ctx);
+          state.persist(pi);
+          return;
+        }
         state.executing = true;
         state.planEnabled = false;
         pi.setActiveTools(EXEC_TOOLS);
-        await switchModel(pi, ctx, pending.config.model);
         pi.setThinkingLevel(pending.config.thinking as ThinkingLevel);
         updateUI(state, ctx);
         state.persist(pi);
@@ -758,15 +789,24 @@ export default function planMode(pi: ExtensionAPI): void {
     // Apply tool restrictions, model, and thinking level
     const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
     if (state.planEnabled) {
-      pi.setActiveTools(PLAN_TOOLS);
-      await switchModel(pi, ctx, config.plan.model);
-      pi.setThinkingLevel(config.plan.thinking);
+      if (await switchModel(pi, ctx, config.plan.model)) {
+        pi.setActiveTools(PLAN_TOOLS);
+        pi.setThinkingLevel(config.plan.thinking);
+      } else {
+        state.planEnabled = false;
+        ctx.ui.notify('Plan mode restored from session state but disabled because the plan model is unavailable.', 'error');
+      }
     } else if (state.executing) {
-      pi.setActiveTools(EXEC_TOOLS);
-      await switchModel(pi, ctx, config.execute.model);
-      pi.setThinkingLevel(config.execute.thinking);
+      if (await switchModel(pi, ctx, config.execute.model)) {
+        pi.setActiveTools(EXEC_TOOLS);
+        pi.setThinkingLevel(config.execute.thinking);
+      } else {
+        state.executing = false;
+        ctx.ui.notify('Execution mode restored from session state but disabled because the execute model is unavailable.', 'error');
+      }
     }
 
     updateUI(state, ctx);
+    state.persist(pi);
   });
 }

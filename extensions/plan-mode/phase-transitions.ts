@@ -31,16 +31,23 @@ export async function enterPlanMode(
   state: PlanModeState,
   pi: ExtensionAPI,
   ctx: ExtensionContext,
-): Promise<void> {
+): Promise<boolean> {
+  const previousThinking = pi.getThinkingLevel() as ThinkingLevel;
+  const previousModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
+  const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
+
+  if (!(await switchModel(pi, ctx, config.plan.model))) {
+    ctx.ui.notify('Plan mode not entered. Choose a valid plan model with /plan models.', 'error');
+    return false;
+  }
+
   state.planEnabled = true;
   state.executing = false;
   state.planDir = undefined;
   state.plan = undefined;
-  state.previousThinking = pi.getThinkingLevel() as ThinkingLevel;
-  state.previousModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
+  state.previousThinking = previousThinking;
+  state.previousModel = previousModel;
   pi.setActiveTools(PLAN_TOOLS);
-  const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
-  await switchModel(pi, ctx, config.plan.model);
   pi.setThinkingLevel(config.plan.thinking);
   ctx.ui.notify(
     `Plan mode ON — ${config.plan.model.provider}/${config.plan.model.id}:${config.plan.thinking}`,
@@ -48,6 +55,7 @@ export async function enterPlanMode(
   );
   updateUI(state, ctx);
   state.persist(pi);
+  return true;
 }
 
 export async function exitPlanMode(
@@ -73,13 +81,23 @@ export async function startExecution(
   state: PlanModeState,
   pi: ExtensionAPI,
   ctx: ExtensionContext,
-): Promise<void> {
+): Promise<boolean> {
+  const wasPlanEnabled = state.planEnabled;
+  const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
+
+  if (!(await switchModel(pi, ctx, config.execute.model))) {
+    state.planEnabled = wasPlanEnabled;
+    state.executing = false;
+    updateUI(state, ctx);
+    state.persist(pi);
+    ctx.ui.notify('Execution not started. Choose a valid execute model with /plan models.', 'error');
+    return false;
+  }
+
   state.planEnabled = false;
   state.executing = true;
   state.executionStartIdx = ctx.sessionManager.getEntries().length;
   pi.setActiveTools(EXEC_TOOLS);
-  const config = loadPlanModeConfig(ctx.cwd, ctx.isProjectTrusted());
-  await switchModel(pi, ctx, config.execute.model);
   pi.setThinkingLevel(config.execute.thinking);
   ctx.ui.notify(
     `Executing plan — ${config.execute.model.provider}/${config.execute.model.id}:${config.execute.thinking}`,
@@ -87,4 +105,5 @@ export async function startExecution(
   );
   updateUI(state, ctx);
   state.persist(pi);
+  return true;
 }
